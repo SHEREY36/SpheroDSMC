@@ -1,0 +1,16 @@
+! Homogeneous cooling of smooth spherocylinders, AR = 2, alpha = 0.8.
+! Run from the repository root:  ./bin/dsmc0d examples/hcs_AR2.0_a0.80.nml
+&run
+  model_file = 'models/model_AR2.0_a0.80.npz'
+  output_prefix = 'hcs_AR2.0_a0.80'
+  n_particles = 250000
+  seed = 1
+  volume_fraction = 0.01
+  density = 0.763944
+  T_tr0 = 1.0
+  T_rot0 = 1.0
+  tau_end = 25.0
+  output_dtau = 0.05
+  sample_tau_start = 5.0
+  sample_dtau = 0.5
+/
