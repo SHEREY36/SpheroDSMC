@@ -1,6 +1,7 @@
 build/
 bin/
-runs/
+runs/*
+!runs/*.sh
 *.o
 *.mod
 __pycache__/

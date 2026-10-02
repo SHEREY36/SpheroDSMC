@@ -8,7 +8,7 @@ closures of
 > DSMC of granular gases of non-spherical particles* (submitted to Physics of Fluids).
 
 The code is the reference implementation of Algorithm 1 of the paper. It is
-small on purpose (about 900 lines of Fortran 2008, no dependencies) so that every
+small on purpose (about 1100 lines of Fortran 2008, no dependencies) so that every
 step of the method can be read next to its equation.
 
 ## Build and run
@@ -94,6 +94,20 @@ python3 tools/export_model.py --artifact closure_v2.npz \
 
 A model file is an uncompressed NumPy archive (`np.savez`); `src/npz_io.f90`
 reads it directly. Its contents are listed at the top of `tools/export_model.py`.
+`tools/export_planes.sh model_dir [AR ...]` exports every fitted plane of a model
+directory (restricted to some restitutions with `ALPHAS="0.6 0.8 0.95"`).
+
+## Reproducing the paper
+
+```bash
+runs/make_paper_campaign.sh /path/to/model_dir      # export, HCS runs, serial benchmark
+```
+
+exports AR = 1.25, 1.5, 2, 2.5, 3 at α = 0.6, 0.8, 0.95 (and AR = 1.25 at
+0.88, 0.90, 0.96), runs four realizations of 2.5×10⁵ particles of each to 25
+contacts per particle (100 at AR = 1.25), and times the first contact per
+particle on one core (`runs/bench/summary.txt`). The results land in
+`runs/hcs_paper/`. On six cores the campaign takes about half an hour.
 
 ## Verification
 
