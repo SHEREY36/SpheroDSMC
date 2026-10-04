@@ -7,7 +7,7 @@ closures of
 > M. Gbolasere and A. Morris, *Collision-data-informed relaxation closures for
 > DSMC of granular gases of non-spherical particles* (submitted to Physics of Fluids).
 
-The code is the reference implementation of Algorithm 1 of the paper. It is
+The code is the reference implementation of Algorithm 3 of the paper. It is
 small on purpose (about 1100 lines of Fortran 2008, no dependencies) so that every
 step of the method can be read next to its equation.
 
@@ -26,15 +26,15 @@ ratio AR = 2 and restitution α = 0.8 for 25 collisions per particle with
 
 | paper | code |
 |---|---|
-| encounter cross-section σ_c(θ) = Ā⊥ D(θ), Eq. (16) | `closure_model::dynamic_factor`, `particles::setup_gas` |
-| speed screen \|g·e\| ≥ U v_max, Eq. (17) | `collisions::collision_step` |
-| orientation and spin screen A⊥ G(Ξ)/(A_sup G_max), Eqs. (18)–(20) | `collisions::projected_area`, `closure_model::spin_factor` |
-| candidate count, Eq. (21) | `collisions::collision_step` |
-| loss ε = [c_t z + c_r (1 − z)] B/⟨B⟩, B ~ Beta(ζ_n/2, ζ_s/2), Eqs. (LOSS) | `collisions::encounter` |
-| exchange z′ = Σ_k w_k Q_k(U; a_k), Eqs. (35), (44) | `closure_model::sample_partition` |
-| rotational split and spin reset, Eqs. (36)–(37) | `collisions::encounter` |
-| angular law exp[a cos χ + b P₂(cos χ)], Eq. (39) | `closure_model::sample_cosine` |
-| velocity update, Eq. (42) | `collisions::encounter` |
+| encounter cross-section σ_c(θ) = Ā⊥ D(θ), Eq. (8) | `closure_model::dynamic_factor`, `particles::setup_gas` |
+| speed screen \|g·e\| ≥ U v_max (Sec. 4.2) | `collisions::collision_step` |
+| orientation and spin screen A⊥ G(Ξ)/(A_sup G_max), Eqs. (7), (9), (10) | `collisions::projected_area`, `closure_model::spin_factor` |
+| candidate count (no-time-counter), Eq. (B.8) | `collisions::collision_step` |
+| loss ε = [c_t z + c_r (1 − z)] B/⟨B⟩, B ~ Beta(ζ_n/2, ζ_s/2), Eqs. (14)–(15) | `collisions::encounter` |
+| exchange z′ = Σ_k w_k Q_k(U; a_k), Eqs. (16), (17), (19) | `closure_model::sample_partition` |
+| rotational split and spin reset (Sec. 5.6) | `collisions::encounter` |
+| angular law exp[a cos χ + b P₂(cos χ)], Eq. (18) | `closure_model::sample_cosine` |
+| velocity update, Eq. (F.2) and Algorithm 3 | `collisions::encounter` |
 | free rotation (exact Rodrigues, Strang split) | `particles::rotate_axes` |
 
 At fixed α and AR every closure depends on the gas only through the temperature
