@@ -35,9 +35,10 @@ program dsmc0d
   real(dp) :: collision_fraction = 0.02_dp   ! encounters per particle per time step
   real(dp) :: output_dtau = 0.05_dp          ! contacts per particle between rows
   real(dp) :: sample_tau_start = huge(1.0_dp), sample_dtau = 0.5_dp
+  real(dp) :: rescale_below = 0.0_dp         ! similarity rescaling when T < rescale_below T(0); 0 = off
   namelist /run/ model_file, output_prefix, n_particles, seed, volume_fraction, density, &
                  diameter, T_tr0, T_rot0, exact_start, tau_end, t_end, collision_fraction, &
-                 output_dtau, sample_tau_start, sample_dtau
+                 output_dtau, sample_tau_start, sample_dtau, rescale_below
 
   type(model_t) :: model
   type(stencil_t) :: st
@@ -50,6 +51,9 @@ program dsmc0d
   real(dp) :: t, ttr, trot, theta, tau_c, tau_enc, dt, nu_enc, vmax, vseen, vprev
   real(dp) :: kc, a2_tr, a2_rot, next_out, next_sample
   real(dp) :: wall_tau_c1, wall_tau_enc1, wall_total, theta_min, theta_max
+  real(dp) :: t_ref, factor, vmean(3)
+  integer :: k
+  integer(i8) :: rescalings
 
   ! ---------------------------------------------------------------- input
   if (command_argument_count() < 1) then
@@ -77,10 +81,32 @@ program dsmc0d
   next_out = 0; next_sample = sample_tau_start
   vprev = 0
   wall_tau_c1 = -1; wall_tau_enc1 = -1
+  rescalings = 0
+  call temperatures(gas, ttr, trot)
+  t_ref = (3 * ttr + 2 * trot) / 5
   theta_min = huge(1.0_dp); theta_max = 0
   call system_clock(clock0, rate)
   do
     call temperatures(gas, ttr, trot)
+    ! Similarity rescaling: in the hard-contact limit an encounter is unchanged by a
+    ! uniform rescaling of all velocities and spins, so the cooling state can be
+    ! followed to long times at a fixed temperature scale.  The time column is then
+    ! in rescaled units; the collision count and the reduced quantities are not affected.
+    if (rescale_below > 0 .and. (3 * ttr + 2 * trot) / 5 < rescale_below * t_ref) then
+      ! The mean velocity is zero up to round-off and collisions conserve it, so it
+      ! does not cool; it is removed here, or repeated rescalings would amplify it
+      ! until it swamped the thermal velocities.
+      factor = sqrt(t_ref / ((3 * ttr + 2 * trot) / 5))
+      vmean = sum(gas%c, dim=2) / gas%n
+      do k = 1, gas%n
+        gas%c(:, k) = factor * (gas%c(:, k) - vmean)
+      end do
+      gas%w = factor * gas%w
+      gas%erot = factor**2 * gas%erot
+      vprev = factor * vprev
+      rescalings = rescalings + 1
+      call temperatures(gas, ttr, trot)
+    end if
     theta = ttr / trot
     tau_enc = 2 * real(cnt%encounters, dp) / gas%n
     tau_c = 2 * cnt%contacts / gas%n
@@ -149,6 +175,9 @@ program dsmc0d
   write(u, '(a,2f10.5)') 'theta range: ', theta_min, theta_max
   write(u, '(a,i0)') 'majorant violations: ', cnt%majorant_violations
   write(u, '(a,i0)') 'energy-axis clamps: ', cnt%energy_clamps
+  write(u, '(a,i0)') 'loss caps: ', cnt%loss_caps
+  write(u, '(a,l1)') 'loss conditioned on z: ', model%loss_memory
+  write(u, '(a,i0)') 'similarity rescalings: ', rescalings
   write(u, '(a,i0)') 'steps with theta outside the nodes: ', cnt%theta_outside_steps
   write(u, '(a,i0)') 'distribution samples: ', samples
   write(u, '(a,f14.4)') 'wall seconds to tau_c = 1: ', wall_tau_c1

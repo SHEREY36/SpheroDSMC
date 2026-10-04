@@ -5,13 +5,16 @@ file read by the Fortran DSMC (src/closure_model.f90).
 
     python3 tools/export_model.py --artifact closure_v2.npz \
         --angular angular_memory.json --cross-section encounter_cross_section.json \
-        --alpha 0.8 --AR 2.0 --out models/model_AR2.0_a0.80.npz
+        --loss-memory loss_memory.json --alpha 0.8 --AR 2.0 --out models/model_AR2.0_a0.80.npz
 
 At fixed restitution alpha and aspect ratio AR every closure depends on the gas
 only through theta = T_tr/T_rot, so the file holds, for each theta node:
 
   theta_nodes (K)              node temperature ratios (increasing)
-  mean_loss (K)                mean energy loss per encounter, eps_bar
+  mean_loss (K)                fitted mean loss per encounter (rescales the loss
+                               entering the exchange law at each node)
+  loss_ct, loss_cr (K)         loss law E[eps|z] = c_t z + c_r (1 - z) (with --loss-memory)
+  loss_eps_mean (K)            plain per-encounter mean loss of the loss table
   xi_grid (NX), xi_enhancement (K, NX)   spin factor G(Xi)
   lambda1, lambda4 (K)         dissipative tilt of the exchange kernel
   memory_form (K)              0: memory lambda3 z;  1: bounded-logit cubic
@@ -39,6 +42,8 @@ def main():
     ap.add_argument("--artifact", required=True)
     ap.add_argument("--angular", required=True, help="angular-memory JSON table")
     ap.add_argument("--cross-section", required=True, help="encounter cross-section JSON")
+    ap.add_argument("--loss-memory", default=None,
+                    help="loss-memory-v1 table: E[eps|z] = c_t z + c_r (1 - z) per node")
     ap.add_argument("--alpha", type=float, required=True)
     ap.add_argument("--AR", type=float, required=True)
     ap.add_argument("--beta-a", type=float, default=1.21,
@@ -90,6 +95,17 @@ def main():
         angular.append([n["eta1"], n["xi"], n["rho1"], n["eta2"], n["zeta"], n["rho2"],
                         *n["a_support"], *n["b_support"]])
 
+    loss_tables = {}
+    if a.loss_memory:
+        lm = json.load(open(a.loss_memory))
+        if lm.get("schema") != "loss-memory-v1":
+            raise SystemExit("not a loss-memory-v1 table")
+        by = {key(n["alpha"], n["theta"], n["AR"]): n for n in lm["nodes"]}
+        rows = [by[key(a.alpha, th, a.AR)] for th in theta]
+        loss_tables = dict(loss_ct=np.array([r["c_t"] for r in rows], float),
+                           loss_cr=np.array([r["c_r"] for r in rows], float),
+                           loss_eps_mean=np.array([r["eps_mean"] for r in rows], float))
+
     cs = json.load(open(a.cross_section))
     if cs.get("schema") != "encounter-cross-section-v2":
         raise SystemExit("need an encounter-cross-section-v2 table")
@@ -117,7 +133,8 @@ def main():
              angular=np.asarray(angular, float),
              cs_theta=cs_theta, cs_dynamic_factor=cs_dyn,
              k_theta=np.array([t for t, _ in kk]), k_mean=np.array([k for _, k in kk]),
-             anchor=np.asarray(art["energy_anchor"], float)[nodes[0]])
+             anchor=np.asarray(art["energy_anchor"], float)[nodes[0]],
+             **loss_tables)
     print(f"{a.out}: alpha={a.alpha} AR={a.AR} theta nodes {list(theta)}  "
           f"energy rows {offsets[-1]} x {prob.size}  forms {list(forms)}")
 

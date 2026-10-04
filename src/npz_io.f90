@@ -11,7 +11,7 @@ module npz_io
   use precision, only: dp, i8
   implicit none
   private
-  public :: npz_read, npz_real1, npz_real2, npz_int1, npz_scalar
+  public :: npz_read, npz_real1, npz_real2, npz_int1, npz_scalar, npz_has
 
   type :: member_t
     character(len=64) :: name = ''
@@ -140,6 +140,20 @@ contains
     end do
     call fail('array "'//name//'" not found in '//z%path)
   end function find
+
+  !> True if the archive holds an array of this name.
+  logical function npz_has(z, name)
+    type(npz_t), intent(in) :: z
+    character(len=*), intent(in) :: name
+    integer :: idx
+    npz_has = .false.
+    do idx = 1, z%n
+      if (trim(z%m(idx)%name) == name) then
+        npz_has = .true.
+        return
+      end if
+    end do
+  end function npz_has
 
   subroutine npz_real1(z, name, a)
     type(npz_t), intent(in) :: z

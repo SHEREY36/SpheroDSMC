@@ -6,7 +6,7 @@
 !>              the mean of |g.e|/v_max over e is g/(2 v_max).
 !> Stage 2 (orientation and spin screen): accept with A_perp G(Xi)/(A_sup G_max),
 !>              Xi = (|w_i| + |w_j|)(L + d)/g.
-!> Encounter:   loss eps = eps_bar(theta) B/<B>, exchange z' ~ Q(U; a),
+!> Encounter:   loss eps = E[eps|z] B/<B>, E[eps|z] = c_t z + c_r (1 - z), exchange z' ~ Q(U; a),
 !>              uniform split of E'_rot, deflection cos(chi) ~ exp(a c + b P2(c)),
 !>              spins reset uniformly in the plane perpendicular to each axis.
 module collisions
@@ -19,9 +19,12 @@ module collisions
   private
   public :: counters_t, collision_step
 
+  real(dp), parameter :: loss_cap = 1 - 1.0e-9_dp    ! a draw cannot remove all of E
+
   type :: counters_t
     integer(i8) :: candidates = 0, speed_accepted = 0, encounters = 0
     integer(i8) :: majorant_violations = 0, energy_clamps = 0, theta_outside_steps = 0
+    integer(i8) :: loss_caps = 0
     real(dp) :: contacts = 0                 ! sum of <k>(theta) over encounters
     real(dp) :: dissipated = 0               ! sum of eps E over encounters
   end type counters_t
@@ -103,9 +106,19 @@ contains
     if (e <= 0) return
     z = etr / e
 
-    ! loss: universal Beta shape on the measured mean loss per encounter
-    eps = s%mean_loss * beta_variate(m%beta_a, m%beta_b) / m%mean_beta
-    if (eps >= 1) error stop 'collisions: drawn loss fraction is not below one'
+    ! loss: universal Beta shape on the measured conditional mean loss
+    ! E[eps|z] = c_t z + c_r (1 - z) (mixture of the node means); older model
+    ! files without the loss table use the unconditional node mean
+    if (m%loss_memory) then
+      eps = max(s%loss_ct * z + s%loss_cr * (1 - z), 0.0_dp) &
+            * beta_variate(m%beta_a, m%beta_b) / m%mean_beta
+    else
+      eps = s%mean_loss * beta_variate(m%beta_a, m%beta_b) / m%mean_beta
+    end if
+    if (eps >= loss_cap) then
+      eps = loss_cap
+      cnt%loss_caps = cnt%loss_caps + 1
+    end if
 
     ! outgoing partition of the surviving energy
     zp = sample_partition(m, s, z, eps, cnt%energy_clamps)

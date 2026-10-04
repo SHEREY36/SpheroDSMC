@@ -12,6 +12,8 @@ PY=${PYTHON:-python3}
 ART=$DIR/closure_v2.npz
 ANG=$DIR/angular_memory.json
 CS=$DIR/encounter_cross_section.json
+LOSS=""
+[ -f $DIR/loss_memory.json ] && LOSS="--loss-memory $DIR/loss_memory.json"
 PLANES=$(ALPHAS="${ALPHAS:-}" $PY - "$ART" "$@" <<'EOF'
 import os, sys, numpy as np
 c = np.load(sys.argv[1])["surface_coordinates"]
@@ -27,7 +29,7 @@ EOF
 )
 mkdir -p models
 while read a ar name; do
-  $PY tools/export_model.py --artifact $ART --angular $ANG --cross-section $CS \
+  $PY tools/export_model.py --artifact $ART --angular $ANG --cross-section $CS $LOSS \
       --alpha $a --AR $ar --out models/$name \
       || echo "skipped alpha=$a AR=$ar"
 done <<< "$PLANES"

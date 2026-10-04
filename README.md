@@ -30,7 +30,7 @@ ratio AR = 2 and restitution α = 0.8 for 25 collisions per particle with
 | speed screen \|g·e\| ≥ U v_max, Eq. (17) | `collisions::collision_step` |
 | orientation and spin screen A⊥ G(Ξ)/(A_sup G_max), Eqs. (18)–(20) | `collisions::projected_area`, `closure_model::spin_factor` |
 | candidate count, Eq. (21) | `collisions::collision_step` |
-| loss ε = ε̄(θ) B/⟨B⟩, B ~ Beta(ζ_n/2, ζ_s/2), Eqs. (29)–(30) | `collisions::encounter` |
+| loss ε = [c_t z + c_r (1 − z)] B/⟨B⟩, B ~ Beta(ζ_n/2, ζ_s/2), Eqs. (LOSS) | `collisions::encounter` |
 | exchange z′ = Σ_k w_k Q_k(U; a_k), Eqs. (35), (44) | `closure_model::sample_partition` |
 | rotational split and spin reset, Eqs. (36)–(37) | `collisions::encounter` |
 | angular law exp[a cos χ + b P₂(cos χ)], Eq. (39) | `closure_model::sample_cosine` |
@@ -70,6 +70,7 @@ separation, possibly several contacts. The output gives both
 | `collision_fraction` | 0.02 | encounters per particle per time step |
 | `output_dtau` | 0.05 | contacts per particle between time-series rows |
 | `sample_tau_start`, `sample_dtau` | ∞, 0.5 | distribution sampling |
+| `rescale_below` | 0 (off) | rescale all velocities and spins back to the initial temperature whenever T falls below this fraction of it (long cooling runs; the time column is then in rescaled units) |
 
 ## Output
 
@@ -83,35 +84,40 @@ separation, possibly several contacts. The output gives both
 
 ## Model files
 
-`models/` holds the closures for AR = 1.1, 1.5, 2, 2.5, 3 and α = 0.5, 0.8, 0.95.
-They are exported from the full closure artifact of the paper with
+`models/` holds the final closures of the paper for AR = 1.1, 1.5, 2, 2.5, 3 and
+α = 0.65, 0.8, 0.95 (about 3 MB each). They are exported from the released model
+folder (`closure_v2.npz` with its three tables) with
 
 ```bash
 python3 tools/export_model.py --artifact closure_v2.npz \
     --angular angular_memory.json --cross-section encounter_cross_section.json \
-    --alpha 0.8 --AR 2.0 --out models/model_AR2.0_a0.80.npz
+    --loss-memory loss_memory.json --alpha 0.8 --AR 2.0 --out models/model_AR2.0_a0.80.npz
 ```
 
 A model file is an uncompressed NumPy archive (`np.savez`); `src/npz_io.f90`
 reads it directly. Its contents are listed at the top of `tools/export_model.py`.
 `tools/export_planes.sh model_dir [AR ...]` exports every fitted plane of a model
-directory (restricted to some restitutions with `ALPHAS="0.6 0.8 0.95"`).
+folder (restricted to some restitutions with `ALPHAS="0.65 0.8 0.95"`). With the
+loss table the loss of an encounter follows the incoming partition,
+E[ε|z] = c_t z + c_r (1 − z); model files without it use the unconditional node mean.
 
 ## Reproducing the paper
 
 ```bash
-runs/make_paper_campaign.sh /path/to/model_dir      # export, HCS runs, serial benchmark
+runs/make_paper_campaign.sh            # HCS against DEM, long-time distributions, benchmark
 ```
 
-exports AR = 1.25, 1.5, 2, 2.5, 3 at α = 0.6, 0.8, 0.95 (and AR = 1.25 at
-0.88, 0.90, 0.96), runs four realizations of 2.5×10⁵ particles of each to 25
-contacts per particle (100 at AR = 1.25), and times the first contact per
-particle on one core (`runs/bench/summary.txt`). The results land in
-`runs/hcs_paper/`. On six cores the campaign takes about half an hour.
+runs four realizations of 2.5×10⁵ particles at every (AR, α) of `models/` to 25
+collisions per particle (100 at AR = 1.1), ten realizations of 10⁵ particles at
+AR = 2 to 1500 collisions per particle with the distributions sampled from 500 on,
+and times the first collision per particle on one core (`runs/bench/summary.txt`).
+The results land in `runs/hcs_paper/` and `runs/hcs_ng/`. On five cores the
+campaign takes about two hours.
 
 ## Verification
 
 `tests/compare_reference.py` compares an ensemble of runs with the original
-Python implementation of the method (DSMC_V2). For AR = 2, α = 0.8, N = 10⁴,
-3 Python and 10 Fortran realizations agree in t(τ), T_tr, T_rot and θ within
-1.7 standard errors at every checkpoint up to 10 encounters per particle.
+Python implementation of the method (DSMC_V2). With the final model, the
+asymptotic temperature ratio θ* of the Fortran code agrees with the Python
+validation campaign to within 0.8 % at AR = 1.1 (α = 0.8), 1.5 (0.65), 2 (0.8)
+and 3 (0.95).

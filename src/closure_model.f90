@@ -11,7 +11,7 @@
 !> and the excursion is counted.
 module closure_model
   use precision, only: dp, i8, pi
-  use npz_io, only: npz_t, npz_read, npz_real1, npz_real2, npz_int1, npz_scalar
+  use npz_io, only: npz_t, npz_read, npz_real1, npz_real2, npz_int1, npz_scalar, npz_has
   use random, only: uniform
   implicit none
   private
@@ -27,6 +27,8 @@ module closure_model
     integer :: nodes = 0
     real(dp), allocatable :: theta(:)                   ! (K) node temperature ratios
     real(dp), allocatable :: mean_loss(:)               ! (K) eps_bar per encounter
+    logical :: loss_memory = .false.                   ! loss conditioned on z
+    real(dp), allocatable :: loss_ct(:), loss_cr(:)    ! (K) E[eps|z] = c_t z + c_r (1 - z)
     real(dp), allocatable :: xi_grid(:)                 ! (NX)
     real(dp), allocatable :: xi_enhancement(:, :)       ! (NX, K) spin factor G
     real(dp) :: g_max = 0                               ! max of G over the plane
@@ -49,6 +51,7 @@ module closure_model
     integer :: node(2) = 1
     real(dp) :: w(2) = [1.0_dp, 0.0_dp]
     real(dp) :: mean_loss = 0                           ! eps_bar(theta)
+    real(dp) :: loss_ct = 0, loss_cr = 0                ! loss rates at theta
     integer :: nx = 0
     real(dp) :: g(max_xi) = 1.0_dp                      ! G(Xi; theta) on xi_grid
     logical :: outside = .false.                        ! theta beyond the node range
@@ -74,6 +77,11 @@ contains
     call npz_real1(z, 'theta_nodes', m%theta)
     m%nodes = size(m%theta)
     call npz_real1(z, 'mean_loss', m%mean_loss)
+    m%loss_memory = npz_has(z, 'loss_ct')
+    if (m%loss_memory) then
+      call npz_real1(z, 'loss_ct', m%loss_ct)
+      call npz_real1(z, 'loss_cr', m%loss_cr)
+    end if
     call npz_real1(z, 'xi_grid', m%xi_grid)
     call npz_real2(z, 'xi_enhancement', m%xi_enhancement)
     if (size(m%xi_grid) > max_xi) error stop 'closure_model: xi grid larger than max_xi'
@@ -127,9 +135,15 @@ contains
     end if
     s%nx = size(m%xi_grid)
     s%mean_loss = 0
+    s%loss_ct = 0
+    s%loss_cr = 0
     s%g(1:s%nx) = 0
     do k = 1, s%n
       s%mean_loss = s%mean_loss + s%w(k) * m%mean_loss(s%node(k))
+      if (m%loss_memory) then
+        s%loss_ct = s%loss_ct + s%w(k) * m%loss_ct(s%node(k))
+        s%loss_cr = s%loss_cr + s%w(k) * m%loss_cr(s%node(k))
+      end if
       s%g(1:s%nx) = s%g(1:s%nx) + s%w(k) * m%xi_enhancement(:, s%node(k))
     end do
   end subroutine make_stencil
