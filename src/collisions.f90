@@ -1,4 +1,4 @@
-!> One collision step of the homogeneous DSMC (Algorithm 1 of the paper).
+!> One collision step of the DSMC in one cell (Algorithm 3 of the paper).
 !>
 !> Candidates:  N_cand = floor(N(N-1) F sigma_c(theta) v_max dt / V + U),
 !>              F = A_sup G_max / A_bar.
