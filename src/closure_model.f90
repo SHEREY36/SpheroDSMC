@@ -29,6 +29,9 @@ module closure_model
     real(dp), allocatable :: mean_loss(:)               ! (K) eps_bar per encounter
     logical :: loss_memory = .false.                   ! loss conditioned on z
     real(dp), allocatable :: loss_ct(:), loss_cr(:)    ! (K) E[eps|z] = c_t z + c_r (1 - z)
+    logical :: loss_bounded = .false.                  ! eps ~ Beta(kappa mu, kappa (1 - mu))
+    real(dp), allocatable :: loss_kappa(:)             ! (K) Beta concentration (0 at alpha = 1)
+    character(len=16) :: contact_model = 'R1-legacy'   ! C1 = contact-point damping, Hertz-Tsuji CTC
     real(dp), allocatable :: xi_grid(:)                 ! (NX)
     real(dp), allocatable :: xi_enhancement(:, :)       ! (NX, K) spin factor G
     real(dp) :: g_max = 0                               ! max of G over the plane
@@ -52,6 +55,7 @@ module closure_model
     real(dp) :: w(2) = [1.0_dp, 0.0_dp]
     real(dp) :: mean_loss = 0                           ! eps_bar(theta)
     real(dp) :: loss_ct = 0, loss_cr = 0                ! loss rates at theta
+    real(dp) :: loss_kappa = 0                          ! Beta concentration at theta
     integer :: nx = 0
     real(dp) :: g(max_xi) = 1.0_dp                      ! G(Xi; theta) on xi_grid
     logical :: outside = .false.                        ! theta beyond the node range
@@ -81,6 +85,14 @@ contains
     if (m%loss_memory) then
       call npz_real1(z, 'loss_ct', m%loss_ct)
       call npz_real1(z, 'loss_cr', m%loss_cr)
+    end if
+    m%loss_bounded = npz_has(z, 'loss_kappa')
+    if (m%loss_bounded) then
+      if (.not. m%loss_memory) error stop 'closure_model: loss_kappa without loss_ct/loss_cr'
+      call npz_real1(z, 'loss_kappa', m%loss_kappa)
+    end if
+    if (npz_has(z, 'contact_model_c1')) then
+      if (npz_scalar(z, 'contact_model_c1') > 0.5_dp) m%contact_model = 'C1'
     end if
     call npz_real1(z, 'xi_grid', m%xi_grid)
     call npz_real2(z, 'xi_enhancement', m%xi_enhancement)
@@ -137,6 +149,7 @@ contains
     s%mean_loss = 0
     s%loss_ct = 0
     s%loss_cr = 0
+    s%loss_kappa = 0
     s%g(1:s%nx) = 0
     do k = 1, s%n
       s%mean_loss = s%mean_loss + s%w(k) * m%mean_loss(s%node(k))
@@ -144,6 +157,7 @@ contains
         s%loss_ct = s%loss_ct + s%w(k) * m%loss_ct(s%node(k))
         s%loss_cr = s%loss_cr + s%w(k) * m%loss_cr(s%node(k))
       end if
+      if (m%loss_bounded) s%loss_kappa = s%loss_kappa + s%w(k) * m%loss_kappa(s%node(k))
       s%g(1:s%nx) = s%g(1:s%nx) + s%w(k) * m%xi_enhancement(:, s%node(k))
     end do
   end subroutine make_stencil

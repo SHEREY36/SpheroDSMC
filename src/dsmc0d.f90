@@ -177,6 +177,8 @@ program dsmc0d
   write(u, '(a,i0)') 'energy-axis clamps: ', cnt%energy_clamps
   write(u, '(a,i0)') 'loss caps: ', cnt%loss_caps
   write(u, '(a,l1)') 'loss conditioned on z: ', model%loss_memory
+  write(u, '(a,l1)') 'bounded loss law (Beta with mean E[eps|z]): ', model%loss_bounded
+  write(u, '(2a)') 'contact model: ', trim(model%contact_model)
   write(u, '(a,i0)') 'similarity rescalings: ', rescalings
   write(u, '(a,i0)') 'steps with theta outside the nodes: ', cnt%theta_outside_steps
   write(u, '(a,i0)') 'distribution samples: ', samples

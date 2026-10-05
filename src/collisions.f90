@@ -6,7 +6,8 @@
 !>              the mean of |g.e|/v_max over e is g/(2 v_max).
 !> Stage 2 (orientation and spin screen): accept with A_perp G(Xi)/(A_sup G_max),
 !>              Xi = (|w_i| + |w_j|)(L + d)/g.
-!> Encounter:   loss eps = E[eps|z] B/<B>, E[eps|z] = c_t z + c_r (1 - z), exchange z' ~ Q(U; a),
+!> Encounter:   loss eps ~ Beta(kappa mu, kappa (1 - mu)), mu = E[eps|z] = c_t z + c_r (1 - z)
+!>              (model files with loss_kappa; older files: eps = E[eps|z] B/<B>), exchange z' ~ Q(U; a),
 !>              uniform split of E'_rot, deflection cos(chi) ~ exp(a c + b P2(c)),
 !>              spins reset uniformly in the plane perpendicular to each axis.
 module collisions
@@ -96,7 +97,7 @@ contains
     integer, intent(in) :: i, j
     real(dp), intent(in) :: gv(3)
     type(counters_t), intent(inout) :: cnt
-    real(dp) :: etr, erot, e, z, eps, zp, ep, etr_out, erot_out, split
+    real(dp) :: etr, erot, e, z, eps, zp, ep, etr_out, erot_out, split, mu
     real(dp) :: ghat(3), e1(3), e2(3), trial(3), cosx, sinx, phi, gout(3), vcm(3)
 
     ! incoming pair energy and partition (centre-of-mass motion is untouched)
@@ -109,7 +110,16 @@ contains
     ! loss: universal Beta shape on the measured conditional mean loss
     ! E[eps|z] = c_t z + c_r (1 - z) (mixture of the node means); older model
     ! files without the loss table use the unconditional node mean
-    if (m%loss_memory) then
+    if (m%loss_bounded) then
+      ! bounded law: 0 < eps < 1 by construction, conditional mean mu exactly
+      mu = s%loss_ct * z + s%loss_cr * (1 - z)
+      if (mu > 1.0e-12_dp .and. s%loss_kappa > 0) then
+        mu = min(mu, 1 - 1.0e-8_dp)
+        eps = beta_variate(s%loss_kappa * mu, s%loss_kappa * (1 - mu))
+      else
+        eps = 0
+      end if
+    else if (m%loss_memory) then
       eps = max(s%loss_ct * z + s%loss_cr * (1 - z), 0.0_dp) &
             * beta_variate(m%beta_a, m%beta_b) / m%mean_beta
     else

@@ -5,31 +5,37 @@
 # encounter_cross_section.json (the layout of DSMC_V2/models/*).
 # Without AR arguments all aspect ratios with a full plane are exported; the
 # environment variable ALPHAS (e.g. ALPHAS="0.6 0.8 0.95") limits the restitutions.
+#   CONTACT_MODEL (required): C1 for contact-point-damping data, R1-legacy for the archived model
+#   OUT_DIR       (default models)
+#   ELASTIC=1     also export the learned alpha = 1 planes (elastic-equilibrium test)
 set -e
 DIR=${1:?usage: tools/export_planes.sh model_dir [AR ...]}
 shift
 PY=${PYTHON:-python3}
+CM=${CONTACT_MODEL:?set CONTACT_MODEL=C1 (or R1-legacy for the archived model)}
+OUT=${OUT_DIR:-models}
 ART=$DIR/closure_v2.npz
 ANG=$DIR/angular_memory.json
 CS=$DIR/encounter_cross_section.json
 LOSS=""
 [ -f $DIR/loss_memory.json ] && LOSS="--loss-memory $DIR/loss_memory.json"
-PLANES=$(ALPHAS="${ALPHAS:-}" $PY - "$ART" "$@" <<'EOF'
+PLANES=$(ALPHAS="${ALPHAS:-}" ELASTIC="${ELASTIC:-0}" $PY - "$ART" "$@" <<'EOF'
 import os, sys, numpy as np
 c = np.load(sys.argv[1])["surface_coordinates"]
 want = [float(a) for a in sys.argv[2:]]
 alphas = [float(a) for a in os.environ["ALPHAS"].split()]
 for a, ar in sorted({(round(x[0], 4), round(x[2], 4)) for x in c}):
-    if a < 1.0 and (not want or any(abs(ar - w) < 1e-9 for w in want)) \
+    if (a < 1.0 or os.environ["ELASTIC"] == "1") and (not want or any(abs(ar - w) < 1e-9 for w in want)) \
             and (not alphas or any(abs(a - w) < 1e-9 for w in alphas)):
         tag = f"{ar:.2f}"
         tag = tag[:-1] if tag.endswith("0") else tag          # 2.0, 1.25, 1.1
         print(a, ar, f"model_AR{tag}_a{a:.2f}.npz")
 EOF
 )
-mkdir -p models
+mkdir -p "$OUT"
 while read a ar name; do
+  EL=""; [ "$a" = "1.0" ] && EL="--elastic-plane"
   $PY tools/export_model.py --artifact $ART --angular $ANG --cross-section $CS $LOSS \
-      --alpha $a --AR $ar --out models/$name \
+      --contact-model "$CM" $EL --alpha $a --AR $ar --out "$OUT/$name" \
       || echo "skipped alpha=$a AR=$ar"
 done <<< "$PLANES"

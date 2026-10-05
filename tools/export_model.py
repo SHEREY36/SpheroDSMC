@@ -14,6 +14,8 @@ only through theta = T_tr/T_rot, so the file holds, for each theta node:
   mean_loss (K)                fitted mean loss per encounter (rescales the loss
                                entering the exchange law at each node)
   loss_ct, loss_cr (K)         loss law E[eps|z] = c_t z + c_r (1 - z) (with --loss-memory)
+  loss_kappa (K)               Beta concentration of the bounded loss law (loss-memory-v2)
+  contact_model_c1             1 for contact model C1 data, 0 for the archived model R1
   loss_eps_mean (K)            plain per-encounter mean loss of the loss table
   xi_grid (NX), xi_enhancement (K, NX)   spin factor G(Xi)
   lambda1, lambda4 (K)         dissipative tilt of the exchange kernel
@@ -43,7 +45,13 @@ def main():
     ap.add_argument("--angular", required=True, help="angular-memory JSON table")
     ap.add_argument("--cross-section", required=True, help="encounter cross-section JSON")
     ap.add_argument("--loss-memory", default=None,
-                    help="loss-memory-v1 table: E[eps|z] = c_t z + c_r (1 - z) per node")
+                    help="loss-memory table: E[eps|z] = c_t z + c_r (1 - z) per node (v1), plus the "
+                         "Beta concentration kappa of the bounded law (v2)")
+    ap.add_argument("--contact-model", required=True, choices=("C1", "R1-legacy"),
+                    help="contact model of the CTC data behind the artifact; checked against the "
+                         "model_card.json next to the artifact when there is one")
+    ap.add_argument("--elastic-plane", action="store_true",
+                    help="export the learned alpha = 1 plane (elastic-equilibrium test only)")
     ap.add_argument("--alpha", type=float, required=True)
     ap.add_argument("--AR", type=float, required=True)
     ap.add_argument("--beta-a", type=float, default=1.21,
@@ -61,8 +69,15 @@ def main():
                          "the Fortran code samples fitted planes only")
     nodes = on_plane[np.argsort(coords[on_plane, 1])]
     theta = coords[nodes, 1]
-    if a.alpha >= 1.0:
-        raise SystemExit("alpha = 1 uses the elastic Borgnakke-Larsen block, not a fitted plane")
+    if a.alpha >= 1.0 and not a.elastic_plane:
+        raise SystemExit("alpha = 1 uses the elastic Borgnakke-Larsen block, not a fitted plane "
+                         "(--elastic-plane exports the learned alpha = 1 plane for the equilibrium test)")
+    import os
+    card = os.path.join(os.path.dirname(os.path.abspath(a.artifact)), "model_card.json")
+    if os.path.exists(card):
+        declared = json.load(open(card)).get("contact_model_id", "R1-legacy")
+        if declared != a.contact_model:
+            raise SystemExit(f"{card} declares contact model {declared}, not {a.contact_model}")
 
     forms = np.asarray(art["energy_kernel_forms"]).astype(str)[nodes]
     memory_form = np.array([1 if f == "conditional_logit_cubic_v3" else 0 for f in forms], np.int64)
@@ -98,13 +113,17 @@ def main():
     loss_tables = {}
     if a.loss_memory:
         lm = json.load(open(a.loss_memory))
-        if lm.get("schema") != "loss-memory-v1":
-            raise SystemExit("not a loss-memory-v1 table")
+        if lm.get("schema") not in ("loss-memory-v1", "loss-memory-v2"):
+            raise SystemExit("not a loss-memory table")
         by = {key(n["alpha"], n["theta"], n["AR"]): n for n in lm["nodes"]}
         rows = [by[key(a.alpha, th, a.AR)] for th in theta]
         loss_tables = dict(loss_ct=np.array([r["c_t"] for r in rows], float),
                            loss_cr=np.array([r["c_r"] for r in rows], float),
                            loss_eps_mean=np.array([r["eps_mean"] for r in rows], float))
+        if lm["schema"] == "loss-memory-v2":
+            loss_tables["loss_kappa"] = np.array([r["kappa"] or 0.0 for r in rows], float)
+        elif a.contact_model == "C1":
+            raise SystemExit("contact model C1 needs a loss-memory-v2 table (bounded loss law)")
 
     cs = json.load(open(a.cross_section))
     if cs.get("schema") != "encounter-cross-section-v2":
@@ -134,6 +153,7 @@ def main():
              cs_theta=cs_theta, cs_dynamic_factor=cs_dyn,
              k_theta=np.array([t for t, _ in kk]), k_mean=np.array([k for _, k in kk]),
              anchor=np.asarray(art["energy_anchor"], float)[nodes[0]],
+             contact_model_c1=np.array([1.0 if a.contact_model == "C1" else 0.0]),
              **loss_tables)
     print(f"{a.out}: alpha={a.alpha} AR={a.AR} theta nodes {list(theta)}  "
           f"energy rows {offsets[-1]} x {prob.size}  forms {list(forms)}")

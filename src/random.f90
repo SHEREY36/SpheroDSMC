@@ -63,7 +63,8 @@ contains
     normal = x * s
   end function normal
 
-  !> Gamma(shape a, scale 1) for a >= 1 (Marsaglia and Tsang, 2000).
+  !> Gamma(shape a, scale 1) for a >= 1 (Marsaglia and Tsang, 2000); see
+  !> log_gamma_variate for any a > 0.
   real(dp) function gamma_variate(a)
     real(dp), intent(in) :: a
     real(dp) :: d, c, x, v, u
@@ -81,13 +82,28 @@ contains
     gamma_variate = d * v
   end function gamma_variate
 
-  !> Beta(a, b) from two Gamma variates.
+  !> log of a Gamma(shape a, scale 1) variate for any a > 0: for a < 1,
+  !> Gamma(a) = Gamma(a + 1) U^(1/a), kept in logs so small shapes do not underflow.
+  real(dp) function log_gamma_variate(a)
+    real(dp), intent(in) :: a
+    if (a >= 1.0_dp) then
+      log_gamma_variate = log(gamma_variate(a))
+    else
+      log_gamma_variate = log(gamma_variate(a + 1.0_dp)) + log(1.0_dp - uniform()) / a
+    end if
+  end function log_gamma_variate
+
+  !> Beta(a, b) from two Gamma variates (any a, b > 0).
   real(dp) function beta_variate(a, b)
     real(dp), intent(in) :: a, b
     real(dp) :: x, y
-    x = gamma_variate(a)
-    y = gamma_variate(b)
-    beta_variate = x / (x + y)
+    if (a >= 1.0_dp .and. b >= 1.0_dp) then
+      x = gamma_variate(a)
+      y = gamma_variate(b)
+      beta_variate = x / (x + y)
+    else
+      beta_variate = 1.0_dp / (1.0_dp + exp(log_gamma_variate(b) - log_gamma_variate(a)))
+    end if
   end function beta_variate
 
   !> Unit vector uniform on the sphere.
