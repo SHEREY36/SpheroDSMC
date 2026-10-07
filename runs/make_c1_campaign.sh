@@ -14,6 +14,9 @@
 #           alpha 0.5..0.95; shear rate, cold and hot starts, run length and averaging window
 #           of the Python validation protocol usf-encounter-v1): four realizations of 10^5
 #           particles per start                                       -> $OUT/usf
+#  usf_long the near-elastic USF cases (alpha 0.9, 0.95; slow relaxation) with the run length and
+#           the start of the averaging window multiplied by USF_TAU_SCALE (default 2)
+#                                                                    -> $OUT/usf_long
 #  ablation the five ablations of collisions.f90/closure_model.f90 (no refit): HCS at AR 1.1, 2, 3
 #           x alpha 0.65, 0.8, four realizations of 2.5x10^5; USF at AR 2 x alpha 0.65, 0.8,
 #           0.95, two realizations of 10^5 per start                  -> $OUT/ablation
@@ -89,6 +92,22 @@ for part in $PARTS; do
           if [ $br = cold ]; then t0=$tc; r0=$rc; else t0=$th; r0=$rh; fi
           for s in 1 2 3 4; do
             nml "$OUT/usf/AR${ar}_a${a}_${br}_s$s" "$MODELS/model_AR${ar}_a${a}.npz" 100000 $((300 + s)) "$tend" \
+                "flow = 'usf'" "shear_rate = $gd" "T_tr0 = $t0" "T_rot0 = $r0" \
+                "stress_tau_start = $tstart" "output_dtau = 0.05"
+          done
+        done
+      done ;;
+    usf_long)
+      mkdir -p "$OUT/usf_long"
+      scale=${USF_TAU_SCALE:-2}
+      tail -n +4 runs/usf_protocol.csv | while IFS=, read -r ar a gd tc rc th rh tend tstart; do
+        case $a in 0.90|0.95) ;; *) continue ;; esac
+        tend=$(awk -v t="$tend" -v s="$scale" 'BEGIN { printf "%.1f", t * s }')
+        tstart=$(awk -v t="$tstart" -v s="$scale" 'BEGIN { printf "%.1f", t * s }')
+        for br in cold hot; do
+          if [ $br = cold ]; then t0=$tc; r0=$rc; else t0=$th; r0=$rh; fi
+          for s in 1 2 3 4; do
+            nml "$OUT/usf_long/AR${ar}_a${a}_${br}_s$s" "$MODELS/model_AR${ar}_a${a}.npz" 100000 $((300 + s)) "$tend" \
                 "flow = 'usf'" "shear_rate = $gd" "T_tr0 = $t0" "T_rot0 = $r0" \
                 "stress_tau_start = $tstart" "output_dtau = 0.05"
           done
