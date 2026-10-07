@@ -2,6 +2,7 @@ build/
 bin/
 runs/*
 !runs/*.sh
+!runs/*.sbatch
 !runs/usf_protocol.csv
 *.o
 *.mod

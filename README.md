@@ -141,7 +141,9 @@ the normal velocity of the contact points) from planes exported with
 HCS against DEM, the elastic-equilibrium test on the learned α = 1 planes, the uniform
 shear flow at the 40 DEM cases of `runs/usf_protocol.csv` (from a cold and a hot start)
 and the long-time distributions. `tools/usf_summary.py runs/C1/usf --dem <DEM table>`
-reduces the USF runs (cold and hot runs of one seed are averaged first).
+reduces the USF runs (cold and hot runs of one seed are averaged first). On a Slurm
+cluster, `RUNNER=slurm` submits the selected runs as one array of single-core tasks
+(`runs/run_list.sbatch`) and `CHECK_ONLY=1` checks their logs afterwards.
 
 ## Verification
 

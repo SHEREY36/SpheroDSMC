@@ -23,6 +23,9 @@
 #  bench    serial timing (runs/bench_serial.sh on $MODELS); run it alone, not with others
 #
 # MODELS (default models_C1) and OUT (default runs/C1) select the planes and the output.
+# RUNNER=slurm submits the runs as one Slurm array (one core per run; ACCOUNT, QOS, PARTITION,
+# RUN_TIME from the environment) instead of running them here; check the logs once the array
+# has finished with CHECK_ONLY=1 runs/make_c1_campaign.sh.
 # Finished runs (log with "wall seconds total") are skipped, so the script can be rerun.
 # Every run must report "contact model: C1"; the script checks the logs at the end.
 set -e
@@ -30,6 +33,8 @@ JOBS=${1:-10}
 MODELS=${MODELS:-models_C1}
 OUT=${OUT:-runs/C1}
 PARTS=${PARTS:-"hcs elastic ng"}
+RUNNER=${RUNNER:-local}
+[ -n "${CHECK_ONLY:-}" ] && PARTS=""
 make -s
 LIST=$OUT/list.txt
 mkdir -p "$OUT"
@@ -138,7 +143,18 @@ if [ -s "$LIST" ]; then
   { grep hcs_ng "$LIST" || true; grep elastic "$LIST" || true; grep usf "$LIST" || true;
     grep -v "hcs_ng\|elastic\|usf" "$LIST" || true; } \
     > "$LIST.ordered"
-  echo "$(wc -l < "$LIST.ordered") runs, $JOBS at a time"
+  n=$(wc -l < "$LIST.ordered")
+  if [ "$RUNNER" = slurm ]; then
+    stamp=$(date +%Y%m%dT%H%M%S)
+    cp "$LIST.ordered" "$OUT/list_$stamp.txt"
+    mkdir -p "$OUT/slurm"
+    sbatch -A "${ACCOUNT:-morri353}" -p "${PARTITION:-cpu}" -q "${QOS:-normal}" -J sdsmc_c1 \
+      --time="${RUN_TIME:-01:00:00}" --array=0-$((n - 1)) -o "$OUT/slurm/%A_%a.out" \
+      runs/run_list.sbatch "$OUT/list_$stamp.txt"
+    echo "$n runs submitted as one array; when it has finished: CHECK_ONLY=1 OUT=$OUT runs/make_c1_campaign.sh"
+    exit 0
+  fi
+  echo "$n runs, $JOBS at a time"
   xargs -a "$LIST.ordered" -P "$JOBS" -I{} sh -c './bin/dsmc0d {} > /dev/null'
 fi
 
