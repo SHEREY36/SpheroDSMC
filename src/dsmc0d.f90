@@ -4,8 +4,11 @@
 !>
 !> The collision model (one restitution coefficient and aspect ratio) is read
 !> from a single .npz file made by tools/export_model.py.  The program follows
-!> the homogeneous cooling state from T_tr = T_tr0, T_rot = T_rot0 and writes
+!> the homogeneous cooling state (flow = 'hcs') or the uniform shear flow
+!> (flow = 'usf', shear rate gdot) from T_tr = T_tr0, T_rot = T_rot0 and writes
 !>   <prefix>.ts     time series (one row every output_dtau contacts/particle)
+!>   <prefix>.stress USF only: kinetic stress P^k_ij/(n T_tr), T* = T_tr/(m gdot^2 d^2)
+!>                   and the energy ledger (thermal energy, shear work, collisional change)
 !>   <prefix>.speed  reduced speed distribution     (if sampling is enabled)
 !>   <prefix>.rot    reduced rotational-energy distribution
 !>   <prefix>.log    parameters, counters and wall-clock times
@@ -19,7 +22,7 @@ program dsmc0d
   use closure_model, only: model_t, stencil_t, load_model, make_stencil, &
                            dynamic_factor, contacts_per_encounter
   use particles, only: gas_t, setup_gas, initialize, temperatures, rotate_axes, &
-                       non_gaussianity
+                       non_gaussianity, shear_step, kinetic_stress, thermal_energy
   use collisions, only: counters_t, collision_step
   use distributions, only: histogram_t, init_histograms, sample_histograms, write_histograms
   implicit none
@@ -36,9 +39,14 @@ program dsmc0d
   real(dp) :: output_dtau = 0.05_dp          ! contacts per particle between rows
   real(dp) :: sample_tau_start = huge(1.0_dp), sample_dtau = 0.5_dp
   real(dp) :: rescale_below = 0.0_dp         ! similarity rescaling when T < rescale_below T(0); 0 = off
+  character(len=8) :: flow = 'hcs'           ! 'hcs' (cooling) or 'usf' (uniform shear flow)
+  real(dp) :: shear_rate = 0.0_dp            ! USF: gdot
+  real(dp) :: stress_tau_start = huge(1.0_dp) ! USF: steady averages over tau_c >= this
+  real(dp) :: max_shear_step = 0.01_dp       ! USF: largest strain gdot dt per time step
   namelist /run/ model_file, output_prefix, n_particles, seed, volume_fraction, density, &
                  diameter, T_tr0, T_rot0, exact_start, tau_end, t_end, collision_fraction, &
-                 output_dtau, sample_tau_start, sample_dtau, rescale_below
+                 output_dtau, sample_tau_start, sample_dtau, rescale_below, &
+                 flow, shear_rate, stress_tau_start, max_shear_step
 
   type(model_t) :: model
   type(stencil_t) :: st
@@ -54,6 +62,12 @@ program dsmc0d
   real(dp) :: t_ref, factor, vmean(3)
   integer :: k
   integer(i8) :: rescalings
+  ! USF
+  logical :: usf, in_window
+  integer :: sf, nrows
+  real(dp) :: pk(6), tstar, eth0, eth, e1, w_shear, w_coll
+  real(dp) :: win_t0, win_tau0, win_wsh0, win_wcoll0, win_eth0, smean(10), sse(10)
+  real(dp), allocatable :: steady(:, :)
 
   ! ---------------------------------------------------------------- input
   if (command_argument_count() < 1) then
@@ -66,6 +80,10 @@ program dsmc0d
   read(u, nml=run, iostat=ios)
   if (ios /= 0) error stop 'cannot read namelist /run/'
   close(u)
+  usf = trim(flow) == 'usf'
+  if (.not. usf .and. trim(flow) /= 'hcs') error stop 'flow must be hcs or usf'
+  if (usf .and. shear_rate <= 0) error stop 'flow = usf needs shear_rate > 0'
+  if (usf .and. rescale_below > 0) error stop 'similarity rescaling is for the cooling state only'
 
   call load_model(trim(model_file), model)
   call rng_seed(seed)
@@ -75,6 +93,11 @@ program dsmc0d
 
   open(newunit=ts, file=trim(output_prefix)//'.ts', status='replace')
   write(ts, '(a)') '# t  tau_enc  tau_c  T_tr  T_rot  theta  T  a2_tr  a2_rot  dt'
+  if (usf) then
+    open(newunit=sf, file=trim(output_prefix)//'.stress', status='replace')
+    write(sf, '(a)') '# t  tau_c  T_tr  T_rot  theta  Tstar  Pk_xx  Pk_yy  Pk_zz  Pk_xy  Pk_xz  Pk_yz' // &
+                     '  E_th  W_shear  W_coll  resid   (P^k_ij reduced by n T_tr; W cumulative)'
+  end if
 
   ! ---------------------------------------------------------------- time march
   t = 0; dt = 0; steps = 0; samples = 0
@@ -85,6 +108,10 @@ program dsmc0d
   call temperatures(gas, ttr, trot)
   t_ref = (3 * ttr + 2 * trot) / 5
   theta_min = huge(1.0_dp); theta_max = 0
+  eth0 = thermal_energy(gas); w_shear = 0; w_coll = 0
+  in_window = .false.; nrows = 0
+  win_t0 = 0; win_tau0 = 0; win_wsh0 = 0; win_wcoll0 = 0; win_eth0 = 0
+  allocate(steady(10, 1024))
   call system_clock(clock0, rate)
   do
     call temperatures(gas, ttr, trot)
@@ -115,6 +142,21 @@ program dsmc0d
       call non_gaussianity(gas, ttr, trot, a2_tr, a2_rot)
       write(ts, '(10es17.9)') t, tau_enc, tau_c, ttr, trot, theta, (3 * ttr + 2 * trot) / 5, &
                                a2_tr, a2_rot, dt
+      if (usf) then
+        call kinetic_stress(gas, ttr, pk)
+        tstar = ttr / (gas%mass * (shear_rate * gas%diameter)**2)
+        eth = thermal_energy(gas)
+        write(sf, '(16es17.9)') t, tau_c, ttr, trot, theta, tstar, pk, eth, w_shear, w_coll, &
+                                eth - eth0 - w_shear - w_coll
+        if (tau_c >= stress_tau_start .and. tau_c <= tau_end) then
+          if (.not. in_window) then
+            in_window = .true.
+            win_t0 = t; win_tau0 = tau_c; win_wsh0 = w_shear; win_wcoll0 = w_coll; win_eth0 = eth
+          end if
+          call append_row(steady, nrows, [tstar, theta, pk(1), pk(2), pk(3), pk(4), &
+                                          pk(1) - pk(2), pk(2) - pk(3), a2_tr, a2_rot])
+        end if
+      end if
       next_out = next_out + output_dtau
     end if
     if (tau_c >= next_sample .and. tau_c <= tau_end) then
@@ -133,13 +175,19 @@ program dsmc0d
     nu_enc = gas%number_density * gas%a_bar * dynamic_factor(model, theta) &
            * 4 * sqrt(ttr / (pi * gas%mass))
     dt = collision_fraction / nu_enc
+    if (usf) dt = min(dt, max_shear_step / shear_rate)
     vmax = max(5 * sqrt(2.0_dp) * sqrt((ttr + 2 * trot / 3) / gas%mass), vprev)
 
     ! Strang splitting: half free rotation, collisions, half free rotation
+    ! (USF: the exact shear map is split the same way around the collisions)
     call rotate_axes(gas, 0.5_dp * dt)
+    if (usf) call shear_step(gas, 0.5_dp * shear_rate * dt, w_shear)
     vseen = 0
+    if (usf) e1 = thermal_energy(gas)
     call collision_step(gas, model, st, theta, kc, dt, vmax, vseen, cnt)
+    if (usf) w_coll = w_coll + thermal_energy(gas) - e1
     vprev = vseen
+    if (usf) call shear_step(gas, 0.5_dp * shear_rate * dt, w_shear)
     call rotate_axes(gas, 0.5_dp * dt)
     t = t + dt
     steps = steps + 1
@@ -153,11 +201,16 @@ program dsmc0d
   call system_clock(clock1)
   wall_total = real(clock1 - clock0, dp) / rate
   close(ts)
+  if (usf) close(sf)
   if (samples > 0) call write_histograms(trim(output_prefix), hspeed, hrot)
 
   ! ---------------------------------------------------------------- log
   open(newunit=u, file=trim(output_prefix)//'.log', status='replace')
-  write(u, '(a)') 'dsmc0d: homogeneous cooling of smooth spherocylinders'
+  if (usf) then
+    write(u, '(a)') 'dsmc0d: uniform shear flow of smooth spherocylinders'
+  else
+    write(u, '(a)') 'dsmc0d: homogeneous cooling of smooth spherocylinders'
+  end if
   write(u, nml=run)
   write(u, '(a,f8.4,a,f6.3)') 'model: alpha = ', model%alpha, '  AR = ', model%aspect_ratio
   write(u, '(a,*(es12.4))') 'theta nodes: ', model%theta
@@ -184,6 +237,59 @@ program dsmc0d
   write(u, '(a,i0)') 'distribution samples: ', samples
   write(u, '(a,f14.4)') 'wall seconds to tau_c = 1: ', wall_tau_c1
   write(u, '(a,f14.4)') 'wall seconds to tau_enc = 1: ', wall_tau_enc1
+  if (usf) then
+    write(u, '(a,es15.7)') 'shear rate: ', shear_rate
+    write(u, '(a,i0,a,2f12.4)') 'steady window rows: ', nrows, '  tau_c from, to: ', win_tau0, tau_c
+    if (nrows >= 20) then
+      call block_stats(steady(:, 1:nrows), smean, sse)
+      write(u, '(a)') 'steady quantities: Tstar theta Pk_xx Pk_yy Pk_zz Pk_xy N1 N2 a2_tr a2_rot' // &
+                      ' (P^k reduced by n T_tr; N1 = Pk_xx - Pk_yy, N2 = Pk_yy - Pk_zz)'
+      write(u, '(a,10es15.7)') 'steady mean: ', smean
+      write(u, '(a,10es15.7)') 'steady se (10 blocks): ', sse
+      write(u, '(a,es15.7)') 'contacts per particle per unit strain: ', &
+                             (tau_c - win_tau0) / (shear_rate * (t - win_t0))
+      write(u, '(a,4es15.7)') 'steady window energy: shear work, collisional change, thermal change, ' // &
+                              '(shear + collisional)/shear: ', w_shear - win_wsh0, w_coll - win_wcoll0, &
+                              thermal_energy(gas) - win_eth0, &
+                              (w_shear - win_wsh0 + w_coll - win_wcoll0) / max(abs(w_shear - win_wsh0), tiny(1.0_dp))
+    end if
+    write(u, '(a,es15.7)') 'energy bookkeeping residual / |shear work|: ', &
+                           (thermal_energy(gas) - eth0 - w_shear - w_coll) / max(abs(w_shear), tiny(1.0_dp))
+  end if
   write(u, '(a,f14.4)') 'wall seconds total (time march): ', wall_total
   close(u)
+
+contains
+
+  !> Append one row to a growing column-major table.
+  subroutine append_row(a, n, row)
+    real(dp), allocatable, intent(inout) :: a(:, :)
+    integer, intent(inout) :: n
+    real(dp), intent(in) :: row(:)
+    real(dp), allocatable :: tmp(:, :)
+    if (n == size(a, 2)) then
+      allocate(tmp(size(a, 1), 2 * size(a, 2)))
+      tmp(:, 1:n) = a(:, 1:n)
+      call move_alloc(tmp, a)
+    end if
+    n = n + 1
+    a(:, n) = row
+  end subroutine append_row
+
+  !> Means of the rows and standard errors from 10 consecutive blocks.
+  subroutine block_stats(x, mean, se)
+    real(dp), intent(in) :: x(:, :)
+    real(dp), intent(out) :: mean(:), se(:)
+    integer, parameter :: nb = 10
+    integer :: b, bl
+    real(dp) :: bm(size(x, 1), nb), bbar(size(x, 1))
+    bl = size(x, 2) / nb
+    do b = 1, nb
+      bm(:, b) = sum(x(:, (b - 1) * bl + 1:b * bl), dim=2) / bl
+    end do
+    bbar = sum(bm, dim=2) / nb
+    mean = sum(x, dim=2) / size(x, 2)
+    se = sqrt(sum((bm - spread(bbar, 2, nb))**2, dim=2) / (nb * (nb - 1)))
+  end subroutine block_stats
+
 end program dsmc0d

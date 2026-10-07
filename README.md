@@ -71,6 +71,19 @@ separation, possibly several contacts. The output gives both
 | `output_dtau` | 0.05 | contacts per particle between time-series rows |
 | `sample_tau_start`, `sample_dtau` | ∞, 0.5 | distribution sampling |
 | `rescale_below` | 0 (off) | rescale all velocities and spins back to the initial temperature whenever T falls below this fraction of it (long cooling runs; the time column is then in rescaled units) |
+| `flow` | `hcs` | `hcs`: homogeneous cooling; `usf`: uniform shear flow |
+| `shear_rate` | 0 | USF shear rate γ̇ |
+| `stress_tau_start` | ∞ | USF: steady averages over τ_c ≥ this |
+| `max_shear_step` | 0.01 | USF: largest strain γ̇Δt per time step |
+
+### Uniform shear flow
+
+With `flow = 'usf'` the peculiar velocities are sheared in the homogeneous (Lagrangian)
+frame, c_x ← c_x − γ̇ c_y Δt, exactly; axes and spins are unaffected. The shear map is
+split around the collisions in half steps, like the free rotation. The time step is the
+smaller of the collision step and `max_shear_step`/γ̇. The exact shear work and the
+energy change of the collisions are accumulated, so the energy ledger closes to round-off,
+and in the steady state the shear work balances the collisional loss.
 
 ## Output
 
@@ -78,9 +91,14 @@ separation, possibly several contacts. The output gives both
   a₂ of the translational and rotational distributions, dt.
 * `<prefix>.speed`, `<prefix>.rot`: distributions of c* = |c − U|/√(2T_tr/m)
   and x = E_rot/T_rot with the Maxwellian references.
+* `<prefix>.stress` (USF): t, τ_c, T_tr, T_rot, θ, T* = T_tr/(m γ̇² d²), the kinetic
+  stress P^k_ij/(n T_tr) (xx, yy, zz, xy, xz, yz), and the energy ledger (thermal energy,
+  cumulative shear work and collisional change, bookkeeping residual).
 * `<prefix>.log`: parameters, counters (candidates, encounters, majorant
-  violations, table clamps) and wall-clock times, including the time to the
-  first collision per particle.
+  violations, table clamps), the contact model of the closure and wall-clock times,
+  including the time to the first collision per particle. USF runs add the steady
+  means of T*, θ, P^k_ij, N₁, N₂ and a₂ with 10-block standard errors, the contacts per
+  particle per unit strain, and the energy balance over the averaging window.
 
 ## Model files
 
@@ -113,6 +131,16 @@ AR = 2 to 1500 collisions per particle with the distributions sampled from 500 o
 and times the first collision per particle on one core (`runs/bench/summary.txt`).
 The results land in `runs/hcs_paper/` and `runs/hcs_ng/`. On five cores the
 campaign takes about two hours.
+
+### Contact model C1
+
+`runs/make_c1_campaign.sh` runs the campaigns of the contact-model C1 closure (damping of
+the normal velocity of the contact points) from planes exported with
+`CONTACT_MODEL=C1 OUT_DIR=models_C1 ELASTIC=1 tools/export_planes.sh <model folder>`:
+HCS against DEM, the elastic-equilibrium test on the learned α = 1 planes, the uniform
+shear flow at the 40 DEM cases of `runs/usf_protocol.csv` (from a cold and a hot start)
+and the long-time distributions. `tools/usf_summary.py runs/C1/usf --dem <DEM table>`
+reduces the USF runs (cold and hot runs of one seed are averaged first).
 
 ## Verification
 

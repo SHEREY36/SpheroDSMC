@@ -8,7 +8,8 @@ module particles
   use random, only: normal, unit_vector
   implicit none
   private
-  public :: gas_t, setup_gas, initialize, temperatures, rotate_axes, non_gaussianity
+  public :: gas_t, setup_gas, initialize, temperatures, rotate_axes, non_gaussianity, &
+            shear_step, kinetic_stress, thermal_energy
 
   type :: gas_t
     integer :: n = 0                      ! simulator particles (one per real particle)
@@ -125,5 +126,46 @@ contains
     a2_tr = a2_tr / (g%n * 15 * ttr**2) - 1
     a2_rot = sum(g%erot**2) / (g%n * 2 * trot**2) - 1
   end subroutine non_gaussianity
+
+  !> Uniform shear flow in the homogeneous (Lagrangian) frame: over a strain a = gdot dt
+  !> the peculiar velocities follow dc_x/dt = -gdot c_y, i.e. c_x <- c_x - a c_y exactly
+  !> (axes and spins are not affected).  work accumulates the exact change of the kinetic
+  !> energy, m sum(-a c_x c_y + a^2 c_y^2 / 2).
+  subroutine shear_step(g, a, work)
+    type(gas_t), intent(inout) :: g
+    real(dp), intent(in) :: a
+    real(dp), intent(inout) :: work
+    integer :: i
+    real(dp) :: s
+    s = 0
+    do i = 1, g%n
+      s = s - a * g%c(1, i) * g%c(2, i) + 0.5_dp * a * a * g%c(2, i)**2
+      g%c(1, i) = g%c(1, i) - a * g%c(2, i)
+    end do
+    work = work + g%mass * s
+  end subroutine shear_step
+
+  !> Kinetic stress reduced by n T_tr: P^k_ij / (n T_tr) = m <c_i c_j> / T_tr, in the
+  !> order xx, yy, zz, xy, xz, yz (peculiar velocities).
+  subroutine kinetic_stress(g, ttr, p)
+    type(gas_t), intent(in) :: g
+    real(dp), intent(in) :: ttr
+    real(dp), intent(out) :: p(6)
+    real(dp) :: mean(3), d(3)
+    integer :: i
+    mean = sum(g%c, dim=2) / g%n
+    p = 0
+    do i = 1, g%n
+      d = g%c(:, i) - mean
+      p = p + [d(1) * d(1), d(2) * d(2), d(3) * d(3), d(1) * d(2), d(1) * d(3), d(2) * d(3)]
+    end do
+    p = g%mass * p / (g%n * ttr)
+  end subroutine kinetic_stress
+
+  !> Total kinetic plus rotational energy of the simulator particles.
+  real(dp) function thermal_energy(g) result(e)
+    type(gas_t), intent(in) :: g
+    e = 0.5_dp * g%mass * sum(g%c**2) + sum(g%erot)
+  end function thermal_energy
 
 end module particles
