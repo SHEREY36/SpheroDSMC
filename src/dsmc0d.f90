@@ -20,7 +20,7 @@ program dsmc0d
   use precision, only: dp, i8, pi
   use random, only: rng_seed
   use closure_model, only: model_t, stencil_t, load_model, make_stencil, &
-                           dynamic_factor, contacts_per_encounter
+                           dynamic_factor, contacts_per_encounter, ablation_mode, ablation_code
   use particles, only: gas_t, setup_gas, initialize, temperatures, rotate_axes, &
                        non_gaussianity, shear_step, kinetic_stress, thermal_energy
   use collisions, only: counters_t, collision_step
@@ -43,10 +43,12 @@ program dsmc0d
   real(dp) :: shear_rate = 0.0_dp            ! USF: gdot
   real(dp) :: stress_tau_start = huge(1.0_dp) ! USF: steady averages over tau_c >= this
   real(dp) :: max_shear_step = 0.01_dp       ! USF: largest strain gdot dt per time step
+  character(len=32) :: ablation = 'none'     ! none, no_spin_screen, loss_unconditioned,
+                                             ! lambda4_off, isotropic_scattering, memoryless_exchange
   namelist /run/ model_file, output_prefix, n_particles, seed, volume_fraction, density, &
                  diameter, T_tr0, T_rot0, exact_start, tau_end, t_end, collision_fraction, &
                  output_dtau, sample_tau_start, sample_dtau, rescale_below, &
-                 flow, shear_rate, stress_tau_start, max_shear_step
+                 flow, shear_rate, stress_tau_start, max_shear_step, ablation
 
   type(model_t) :: model
   type(stencil_t) :: st
@@ -84,6 +86,8 @@ program dsmc0d
   if (.not. usf .and. trim(flow) /= 'hcs') error stop 'flow must be hcs or usf'
   if (usf .and. shear_rate <= 0) error stop 'flow = usf needs shear_rate > 0'
   if (usf .and. rescale_below > 0) error stop 'similarity rescaling is for the cooling state only'
+  ablation_mode = ablation_code(ablation)
+  if (ablation_mode < 0) error stop 'unknown ablation'
 
   call load_model(trim(model_file), model)
   call rng_seed(seed)
@@ -232,6 +236,7 @@ program dsmc0d
   write(u, '(a,l1)') 'loss conditioned on z: ', model%loss_memory
   write(u, '(a,l1)') 'bounded loss law (Beta with mean E[eps|z]): ', model%loss_bounded
   write(u, '(2a)') 'contact model: ', trim(model%contact_model)
+  write(u, '(2a)') 'ablation: ', trim(ablation)
   write(u, '(a,i0)') 'similarity rescalings: ', rescalings
   write(u, '(a,i0)') 'steps with theta outside the nodes: ', cnt%theta_outside_steps
   write(u, '(a,i0)') 'distribution samples: ', samples

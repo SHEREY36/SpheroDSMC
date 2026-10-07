@@ -12,13 +12,26 @@
 module closure_model
   use precision, only: dp, i8, pi
   use npz_io, only: npz_t, npz_read, npz_real1, npz_real2, npz_int1, npz_scalar, npz_has
-  use random, only: uniform
+  use random, only: uniform, beta_variate
   implicit none
   private
   public :: model_t, stencil_t, load_model, make_stencil, dynamic_factor, &
-            contacts_per_encounter, spin_factor, sample_partition, sample_cosine
+            contacts_per_encounter, spin_factor, sample_partition, sample_cosine, &
+            ablation_mode, ablation_code, ABL_NONE, ABL_SPIN, ABL_LOSS, ABL_LAMBDA4, &
+            ABL_ISOTROPIC, ABL_MEMORYLESS
 
   integer, parameter :: max_xi = 64
+
+  ! Ablations (namelist ablation; one at a time, no refit):
+  !   no_spin_screen        G = 1 in the orientation and spin screen
+  !   loss_unconditioned    loss mean = node mean eps_bar(theta), not E[eps|z]
+  !   lambda4_off           no loss tilt lambda4 eps z' in the exchange argument
+  !   isotropic_scattering  cos(chi) uniform on [-1, 1]
+  !   memoryless_exchange   z' ~ pi_A (equilibrium law Beta(2,2) exp(c1 z + c2 z^2)), the
+  !                         Borgnakke-Larsen limit: no memory of z, no loss tilt
+  integer, parameter :: ABL_NONE = 0, ABL_SPIN = 1, ABL_LOSS = 2, ABL_LAMBDA4 = 3, &
+                        ABL_ISOTROPIC = 4, ABL_MEMORYLESS = 5
+  integer :: ablation_mode = ABL_NONE
 
   type :: model_t
     real(dp) :: alpha = 0, aspect_ratio = 0
@@ -32,6 +45,7 @@ module closure_model
     logical :: loss_bounded = .false.                  ! eps ~ Beta(kappa mu, kappa (1 - mu))
     real(dp), allocatable :: loss_kappa(:)             ! (K) Beta concentration (0 at alpha = 1)
     character(len=16) :: contact_model = 'R1-legacy'   ! C1 = contact-point damping, Hertz-Tsuji CTC
+    real(dp) :: anchor(2) = 0                           ! equilibrium law Beta(2,2) exp(c1 z + c2 z^2)
     real(dp), allocatable :: xi_grid(:)                 ! (NX)
     real(dp), allocatable :: xi_enhancement(:, :)       ! (NX, K) spin factor G
     real(dp) :: g_max = 0                               ! max of G over the plane
@@ -67,7 +81,7 @@ contains
     character(len=*), intent(in) :: path
     type(model_t), intent(out) :: m
     type(npz_t) :: z
-    real(dp), allocatable :: tmp(:), cs_theta(:)
+    real(dp), allocatable :: tmp(:), cs_theta(:), tmp_anchor(:)
     integer, allocatable :: offsets(:)
     integer :: k
 
@@ -90,6 +104,10 @@ contains
     if (m%loss_bounded) then
       if (.not. m%loss_memory) error stop 'closure_model: loss_kappa without loss_ct/loss_cr'
       call npz_real1(z, 'loss_kappa', m%loss_kappa)
+    end if
+    if (npz_has(z, 'anchor')) then
+      call npz_real1(z, 'anchor', tmp_anchor)
+      m%anchor = tmp_anchor(1:2)
     end if
     if (npz_has(z, 'contact_model_c1')) then
       if (npz_scalar(z, 'contact_model_c1') > 0.5_dp) m%contact_model = 'C1'
@@ -195,6 +213,10 @@ contains
     real(dp) :: u, x, fu, a, memory, cov, blend, q_lo, q_hi
     integer :: j, k, nd, lo, hi, r
 
+    if (ablation_mode == ABL_MEMORYLESS) then
+      zp = sample_anchor(m)
+      return
+    end if
     u = uniform()
     x = u * real(m%nu - 1, dp)                       ! uniform probability grid
     j = min(int(x) + 1, m%nu - 1)
@@ -206,6 +228,7 @@ contains
       cov = eps
       if (s%mean_loss > 0 .and. m%mean_loss(nd) > 0) cov = eps * m%mean_loss(nd) / s%mean_loss
       a = m%lambda1(nd) + memory + m%lambda4(nd) * cov
+      if (ablation_mode == ABL_LAMBDA4) a = m%lambda1(nd) + memory
       lo = m%row_first(nd)
       hi = m%row_last(nd)
       if (a < m%a_grid(lo) .or. a > m%a_grid(hi)) then
@@ -219,6 +242,37 @@ contains
       zp = zp + s%w(k) * ((1 - blend) * q_lo + blend * q_hi)
     end do
   end function sample_partition
+
+  !> Ablation code of a namelist name; -1 if unknown.
+  integer function ablation_code(name)
+    character(len=*), intent(in) :: name
+    select case (trim(name))
+    case ('none'); ablation_code = ABL_NONE
+    case ('no_spin_screen'); ablation_code = ABL_SPIN
+    case ('loss_unconditioned'); ablation_code = ABL_LOSS
+    case ('lambda4_off'); ablation_code = ABL_LAMBDA4
+    case ('isotropic_scattering'); ablation_code = ABL_ISOTROPIC
+    case ('memoryless_exchange'); ablation_code = ABL_MEMORYLESS
+    case default; ablation_code = -1
+    end select
+  end function ablation_code
+
+  !> z' from the equilibrium law pi_A(z) ~ 6 z (1 - z) exp(c1 z + c2 z^2) (rejection from Beta(2,2)).
+  real(dp) function sample_anchor(m) result(z)
+    type(model_t), intent(in) :: m
+    real(dp) :: c1, c2, top, v
+    c1 = m%anchor(1)
+    c2 = m%anchor(2)
+    top = max(0.0_dp, c1 + c2)
+    if (c2 /= 0) then
+      v = -c1 / (2 * c2)
+      if (v > 0 .and. v < 1) top = max(top, c1 * v + c2 * v * v)
+    end if
+    do
+      z = beta_variate(2.0_dp, 2.0_dp)
+      if (uniform() <= exp(c1 * z + c2 * z * z - top)) exit
+    end do
+  end function sample_anchor
 
   !> Memory of the incoming partition in the natural parameter of node nd.
   real(dp) function memory_term(m, nd, z)
@@ -244,6 +298,10 @@ contains
     real(dp), intent(in) :: z, zp
     real(dp) :: a, b, fmax, vertex, r
     integer :: nd
+    if (ablation_mode == ABL_ISOTROPIC) then
+      c = 2 * uniform() - 1
+      return
+    end if
     nd = s%node(1)
     if (s%n == 2) then
       if (uniform() >= s%w(1)) nd = s%node(2)

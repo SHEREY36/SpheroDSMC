@@ -75,6 +75,7 @@ separation, possibly several contacts. The output gives both
 | `shear_rate` | 0 | USF shear rate γ̇ |
 | `stress_tau_start` | ∞ | USF: steady averages over τ_c ≥ this |
 | `max_shear_step` | 0.01 | USF: largest strain γ̇Δt per time step |
+| `ablation` | `none` | switch one closure ingredient off, without refitting: `no_spin_screen` (G = 1), `loss_unconditioned` (loss mean = node mean, not E[ε\|z]), `lambda4_off` (no loss tilt in the exchange), `isotropic_scattering` (uniform cos χ), `memoryless_exchange` (z′ from the equilibrium law, the Borgnakke–Larsen limit) |
 
 ### Uniform shear flow
 

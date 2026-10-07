@@ -15,7 +15,7 @@ module collisions
   use random, only: uniform, unit_vector, unit_vector_perpendicular, beta_variate
   use particles, only: gas_t
   use closure_model, only: model_t, stencil_t, dynamic_factor, spin_factor, &
-                           sample_partition, sample_cosine
+                           sample_partition, sample_cosine, ablation_mode, ABL_SPIN, ABL_LOSS
   implicit none
   private
   public :: counters_t, collision_step
@@ -71,7 +71,11 @@ contains
       ghat = gv / speed
       xi = (norm2(g%w(:, i)) + norm2(g%w(:, j))) * reach / speed
       area = projected_area(g, g%u(:, i), g%u(:, j), ghat)
-      if (uniform() * g%a_sup * m%g_max > area * spin_factor(m, s, xi)) cycle
+      if (ablation_mode == ABL_SPIN) then
+        if (uniform() * g%a_sup * m%g_max > area) cycle
+      else
+        if (uniform() * g%a_sup * m%g_max > area * spin_factor(m, s, xi)) cycle
+      end if
 
       call encounter(g, m, s, i, j, gv, cnt)
       cnt%contacts = cnt%contacts + k_contacts
@@ -113,13 +117,14 @@ contains
     if (m%loss_bounded) then
       ! bounded law: 0 < eps < 1 by construction, conditional mean mu exactly
       mu = s%loss_ct * z + s%loss_cr * (1 - z)
+      if (ablation_mode == ABL_LOSS) mu = s%mean_loss
       if (mu > 1.0e-12_dp .and. s%loss_kappa > 0) then
         mu = min(mu, 1 - 1.0e-8_dp)
         eps = beta_variate(s%loss_kappa * mu, s%loss_kappa * (1 - mu))
       else
         eps = 0
       end if
-    else if (m%loss_memory) then
+    else if (m%loss_memory .and. ablation_mode /= ABL_LOSS) then
       eps = max(s%loss_ct * z + s%loss_cr * (1 - z), 0.0_dp) &
             * beta_variate(m%beta_a, m%beta_b) / m%mean_beta
     else
